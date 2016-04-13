@@ -1,0 +1,1167 @@
+cls
+sync on
+sync rate 60
+set display mode 800, 600, 32
+backdrop on
+`color backdrop rgb(0, 0, 0)
+hide mouse
+autocam off
+`set window on
+
+`Because DarkBasic Classic's collision is both inefficient and slow, using a community made system
+#include "SparkyCollisionFunctions.dba"
+
+`Default rate of the enemies
+moveRate = 10
+
+yPos = 130
+
+`Level/enemy related variables
+currentLevel = 0
+lastLevel = 12
+enemyIncrementPerLevel = 2
+startingEnemyCount = 3
+currentEnemies = 0
+`startingEnemyCount + (enemyIncrementPerLevel*lastLevel)
+totalPossibleEnemyCount = 1000
+currentEnemyCountForLevel = startingEnemyCount + currentLevel
+enemySpeed = 3
+enemyKillScoreBonus = 5
+
+`Store data on each enemy. Just their death status
+dim enemies(totalPossibleEnemyCount, 1)
+`dim enemyAnimationTimers(totalPossibleEnemyCount, 2)
+
+`Store timer, animation length, and whether or not to destroy the object afterwards
+dim playAnimationTimers(totalPossibleEnemyCount, 3)
+
+`Gun stuff
+totalAmountOfGuns = 3
+`Load gun models
+`Current Clip, Total ammo, Reload amount (How much is reloaded at a time), Reload time, Gun sound ID, Rate (in milliseconds) per shot, Unlock level, Has unlocked weapon
+dim gunInfo(totalAmountOfGuns, 8)
+dim gunStringData$(totalAmountOfGuns, 2)
+dim gunTimers(totalAmountOfGuns, 2)
+
+swapCurrentGun = 1
+
+startingGunId = totalPossibleEnemyCount+1
+currentGunArrayId = 1
+
+bulletMaxHealth = 40
+bulletStartingId = startingGunId+totalAmountOfGuns+1
+maximumBulletsOnScreen = 100
+bulletSpeed = 60
+
+boundaryObjectStart = bulletStartingId+maximumBulletsOnScreen+1
+maximumBoundaryObjects = boundaryObjectStart+1500
+
+`Used to store the bullet objects for the player
+dim bullets(maximumBulletsOnScreen, 1)
+
+`Used when switching guns
+selectGunTimer = timer()
+
+`This is how long the gun unlock notification will show for (in ms)
+newGunUnlockDisplayTime = 2000
+
+`Store new gun unlock data - timer and unlocked status
+dim newGunUnlocked(1, 2)
+newGunUnlocked(1, 1) = -1
+newGunUnlocked(1, 2) = 0
+
+amountOfCollectables = 5
+currentCoinsForLevel = 0
+collectableStartId = maximumBoundaryObjects+1
+collectableEndId = collectableStartId+amountOfCollectables
+coinPickupScoreBonus = 20
+
+`This is the time penalty - used in the CalculateScore function
+scorePenalty = 50
+
+`Score, won game, lost game
+dim gameState(1, 3)
+gameState(1, 1) = 0
+gameState(1, 2) = 0
+gameState(1, 3) = 0
+
+`Image IDs
+instructionsImage = 1
+youWonImage = 2
+youLostImage = 3
+coinImage = 4
+
+`Song Ids
+spookyScarySkeletonSong = 1
+ramaEasterEggSound = 20
+pistolGunShotSound = 40
+
+xLowBoundary = 0
+xMaxBoundary = 0
+zLowBoundary = 0
+zMaxBoundary = 0
+
+`Variables used for displaying new level cinematic
+levelChangeDisplayTime = 2000
+dim levelChangeTimer(1, 2)
+levelChangeTimer(1, 1) = 0
+levelChangeTimer(1, 2) = 0
+
+bulletCollisionCheckTimer = timer()
+
+gameMode = 1
+
+`The default font size
+defaultTextSize = 10
+
+menuItemCount = 3
+`Store actual menu text and their positions
+dim menuItems$(menuItemCount, 1)
+dim menuItemPos(menuItemCount, 2)
+onMainMenu = 1
+
+`Load resources used for the game
+gosub LoadResources
+
+`Show the main menu
+gosub ShowMainMenu
+
+`Used for tracking when to display text
+displayLevelTextTimer = timer()
+
+`Used for debugging information
+debugMenu = 0
+
+set text size defaultTextSize
+
+gameTimer = timer()
+
+do
+   `get image 1,0,0,256,256
+   `prepare matrix texture 1,1,2,2
+   `randomize matrix 1,50.0
+
+   if inkey$() = "`"
+      if debugMenu = 1
+         debugMenu = 0
+      else
+         debugMenu = 1
+      endif
+   endif
+
+   if debugMenu = 1
+      `backdrop off
+      `text 0, 200, "X: " + str$(camera position x()) + " Y:" + str$(camera position y()) + " Z:" + str$(camera position z())
+      `text 0, 215, "Z Low: " + str$(zLowBoundary) + " Z Max: " + str$(zMaxBoundary)
+      text 0, 200, "Key being pressed: " + str$(scancode())
+   endif
+
+   gosub MakeWallsAndFloor
+
+   gosub ChangeLevelNotification
+
+   gosub SpawnEnemies
+
+   gosub SpinCollectables
+
+   gosub ControlEnemies
+
+   gosub PositionCamera
+
+   if currentLevel > 0
+      gosub SelectCurrentGun
+
+      gosub ReloadCurrentGun
+
+      gosub ShootCurrentGun
+
+      gosub ControlBulletMovement
+
+      `Only check bullet collision every Xms
+      `This is for performance reasons
+      if timer() - bulletCollisionCheckTimer > 50
+         `text 0, 250, "Checking for collisions"
+         gosub ObjectCollision
+         bulletCollisionCheckTimer = timer()
+      endif
+
+      `Check if enemies have hit player
+      `and remove skeletons that have been on the floor too long
+      for enemyId = 1 to currentEnemyCountForLevel
+         if object exist(enemyId)
+            `Check if the skeleton has been on the floor long enough before dying
+            if playAnimationTimers(enemyId, 1) <> -1 and timer() - playAnimationTimers(enemyId, 1) >= playAnimationTimers(enemyId, 2)
+               if playAnimationTimers(enemyId, 3) = 1
+                  delete object enemyId
+               endif
+               playAnimationTimers(enemyId, 1) = -1
+            endif
+
+            `Ensure enemy wasn't destroyed after being on the floor too long
+            if object exist(enemyId) and enemies(enemyId, 1) = 0
+               `If enemies touch the player and the skeletons haven't been slain, they lose.
+               distance# = DistanceBetween(camera position x(), camera position y(), camera position z(), object position x(enemyId), object position y(enemyId), object position z(enemyId))
+
+               if distance# < 100 and enemies(enemyId, 1) = 0
+                  gameState(1, 3) = 1
+                  gosub RestartGame
+               endif
+            endif
+         endif
+      next enemyId
+   endif
+
+   gosub EasterEgg
+
+   `Small display
+    timeSpentInSeconds = (timer()-gameTimer)/1000
+    text 0, 0, "FPS: " + str$(screen fps())
+
+   `Dark basic doesn't like concatenating too many variables together?
+    `So we have to unnecessarily make more variables than are needed.
+    scoreCalculation = gameState(1, 1) - CalculateScore(gameState(1, 1), gameTimer, scorePenalty)
+    newScore$ = " (-" + str$(scoreCalculation) + ")"
+
+   `Only show time penalty if there is one
+    if timeSpentInSeconds >= 60
+       text 0, 15, "Score: " + str$(gameState(1, 1)) + newScore$
+    else
+       text 0, 15, "Score: " + str$(gameState(1, 1))
+    endif
+
+   text 0, 30, "Enemies: " + str$(currentEnemies) + " / " + str$(currentEnemyCountForLevel)
+    text 0, 45, "Coins: " + str$(currentCoinsForLevel) + " / " + str$(amountOfCollectables)
+    text 0, 60, "Level: " + str$(currentLevel) + " / " + str$(lastLevel)
+    text 0, 75, "Time: " + str$(timeSpentInSeconds)
+
+    `Auto adjust the text to the right side of the screen; using the string's length to determine the position.
+    ammoText$ = "Ammo: " + str$(gunInfo(currentGunArrayId, 1)) + " / " + str$(gunInfo(currentGunArrayId, 2))
+    text screen width() - (text width(ammoText$) + 2), 0, ammoText$
+
+    gunText$ = "Gun: " + gunStringData$(currentGunArrayId, 2)
+    text screen width() - (text width(gunText$) + 2), 15, gunText$
+    displayLevelTextTimer = timer()
+   sync
+loop
+
+
+
+`Load resources - self-explanatory
+LoadResources:
+   `Load dll
+   load dll "SparkyCollision.dll", 1
+
+   center text screen width()/2, screen height()/2, "Loading game..."
+   sync
+
+   `Load images
+   load image "Images\Instructions.png", instructionsImage
+   load image "Images\You-won.png", youWonImage
+   load image "Images\You-lost.png", youLostImage
+   `load image "Images\grid.png", floorImage
+   load image "Images\nicolas-cage-coin.png", coinImage
+
+   `Load sounds
+   load sound "Sounds\Pistol gun fire.mp3", pistolGunShotSound
+
+   `Easter egg :)
+   load sound "Sounds\Rama secret laugh.mp3", ramaEasterEggSound
+
+   `Original song: https://www.youtube.com/watch?v=K2rwxs1gH9w
+   load sound "Sounds\Spooky Scary Skeletons.mp3", spookyScarySkeletonSong
+
+   set sound volume spookyScarySkeletonSong, 2
+   loop sound spookyScarySkeletonSong
+
+   `gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel, gunName, unlockLevel
+   AddWeapon(1, 6, 30, 6, 2000, pistolGunShotSound, 500, "Models\Weapons\colt\H-Colt-Static.x", "Pistol", 1)
+   AddWeapon(2, 12, 60, 12, 4000, pistolGunShotSound, 250, "Models\Weapons\ak47\H-AK47-Static.x", "AK47", 3)
+   AddWeapon(3, 24, 120, 24, 5000, pistolGunShotSound, 100, "Models\Weapons\mp40\H-MP40-Static.x", "MP40", 6)
+   `AddWeapon(4, 1000, 5000, 1000, 0, 1, 25, "Models\Weapons\tommy\H-Tommy-Static.x", "Tommy", 1)
+
+   `Set default position
+   position camera xLowBoundary+1000, yPos, zLowBoundary+1000
+
+   gosub InitialiseMainMenu
+return
+
+`START FUNCTIONS
+
+function DisplayAutoSizedText(txt$, position, y)
+   if position = LEFT
+      text 0, y, txt$
+   endif
+
+   if position = RIGHT
+      text screen width() - (text width(txt$) + 2), y, txt$
+   endif
+
+   y = y + text height(txt$)
+endfunction y
+
+`Modulus - returns the remainder of a division calculation
+function Mod(num,modulus)
+   value=num-((num/modulus)*modulus)
+endfunction value
+
+`Gets the distance between two positions
+function DistanceBetween(x1#,y1#,z1#,x2#,y2#,z2#)
+   d#=sqrt(((x2#-x1#)*(x2#-x1#))+((y2#-y1#)*(y2#-y1#))+((z2#-z1#)*(z2#-z1#)))
+endfunction d#
+
+`The id of the object to change animation and play it, the animation or model, the length of the animation in ms,
+`The number of the first frame, the number of the last frame, if the object should be destroyed after the animation has finished
+function PlayAnimation(objectId, model$, animationLength, animationFirstFrame, animationLastFrame, destroyObjectAfterAnimation)
+   if object exist(objectId)
+      if playAnimationTimers(objectId, 1) = -1
+         `Animation hasn't been started yet, start it
+         `Store current object's location and angle for later
+         dim tempPosAndAngs#(1, 6)
+         tempPosAndAngs#(1, 1) = object position x(objectId)
+         tempPosAndAngs#(1, 2) = object position y(objectId)
+         tempPosAndAngs#(1, 3) = object position z(objectId)
+         tempPosAndAngs#(1, 4) = object angle x(objectId)
+         tempPosAndAngs#(1, 5) = object angle y(objectId)
+         tempPosAndAngs#(1, 6) = object angle z(objectId)
+
+         delete object objectId
+
+         `Load animation model and restore previous location and angle
+         load object model$, objectId
+         yrotate object objectId, 180
+         fix object pivot objectId
+         position object objectId, tempPosAndAngs#(1, 1), tempPosAndAngs#(1, 2), tempPosAndAngs#(1, 3)
+         rotate object objectId, tempPosAndAngs#(1, 4), tempPosAndAngs#(1, 5), tempPosAndAngs#(1, 6)
+         scale object objectId, 8000, 8000, 8000
+         play object objectId, animationFirstFrame, animationLastFrame
+         playAnimationTimers(objectId, 1) = timer()
+         playAnimationTimers(objectId, 2) = animationLength
+         playAnimationTimers(objectId, 3) = destroyObjectAfterAnimation
+      endif
+   endif
+endfunction
+
+`Object types: 1: Floor/ceiling
+`2: Left/right wall
+`3: Bottom/top wall
+function GenerateBoundaryObject(startXPos, startYPos, startZPos, arrStartPos, objectWidth, objectHeight, objectDepth, objectType, numOfObjectsToGenerate, objectPerRow, imageId)
+   rowTracker = 1
+   originalXPos = startXPos
+   for i = 1 to numOfObjectsToGenerate
+      object = i+arrStartPos
+
+      if object exist(object)
+
+      else
+         make object box object, objectWidth, objectHeight, objectDepth
+
+         `Only increase the x, y, or z position after one object has been created.
+         if i > 1
+            `Set next tile's x position
+            if objectType = 1
+               startXPos = startXPos + objectWidth
+            endif
+
+            `Set next tile's z position
+            if objectType = 2
+               `zrotate object object, 360
+               startZPos = startZPos + objectDepth
+            endif
+
+            if objectType = 3
+               `yrotate object object, 270
+               startXPos = startXPos + objectWidth
+            endif
+
+            `This is used for the flooring
+            if objectType = 1 and objectPerRow > 1 and rowTracker = objectPerRow
+               startZPos = startZPos + objectDepth
+               startXPos = originalXPos
+               rowTracker = 0
+            endif
+
+            rowTracker = rowTracker + 1
+         endif
+
+         position object object, startXPos, startYPos, startZPos
+         if imageId <> 0 then texture object object, imageId
+         fix object pivot object
+
+         `text 0, 0+(i*15), "Spawned floor object: " + str$(object)
+      endif
+   next i
+endfunction
+
+`Add data into arrays and load the model into a specified ID.
+function AddWeapon(gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel$, gunName$, unlockLevel)
+   `Load object into specified ID
+   `load object  gunModel$, bulletStartingId-1+gunId
+
+   `Current clip
+   gunInfo(gunId, 1) = currentClip
+   `Total ammo
+   gunInfo(gunId, 2) = totalAmmo
+   `Reload amount
+   gunInfo(gunId, 3) = reloadAmount
+   `Reload time (in milliseconds)
+   gunInfo(gunId, 4) = reloadTime
+   `Gun sound ID - used when firing
+   gunInfo(gunId, 5) = gunSoundId
+   `Rate per shot (in milliseconds)
+   gunInfo(gunId, 6) = ratePerShot
+   `What level the gun is unlocked for use
+   gunInfo(gunId, 7) = unlockLevel
+   `Model to use
+   gunStringData$(gunId, 1) = gunModel$
+   `Name of the gun
+   gunStringData$(gunId, 2) = gunName$
+   gunTimers(gunId, 1) = timer()
+   gunTimers(gunId, 2) = 0
+endfunction
+
+`Better random generator - allows the use of a minimum and maximum value
+`Call randomize timer() before usage - prepares a seed for its use
+function Random(min, max)
+   `Generate number
+   rand = rnd(max)+min
+endfunction rand
+
+`Generates the end game score
+`Takes into account the time it took the player
+function CalculateScore(currentScore, gameTimer, scorePenalty)
+   `Take away X points every minute
+   timeTakenInMins = ((timer()-gameTimer) / 1000) / 60
+   if timeTakenInMins >= 1
+      score = currentScore - timeTakenInMins*scorePenalty
+   else
+      score = currentScore
+   endif
+endfunction score
+
+`Returns the new y position (+offset - used for the next item)
+function AddMenuItem(id, txt$, x, y)
+   menuItems$(id, 1) = txt$
+   menuItemPos(id, 1) = x
+   menuItemPos(id, 2) = y
+   y = y+text height(txt$)*5
+endfunction y
+`END FUNCTIONS
+
+EasterEgg:
+   if keystate(47) = 1 and keystate(18) = 1 and keystate(38) = 1
+      play sound ramaEasterEggSound
+      set sound volume ramaEasterEggSound, 6
+   endif
+return
+
+CleanUpLevel:
+   `Remove all enemies
+   for enemyId = 1 to totalPossibleEnemyCount
+      if object exist(enemyId) then delete object enemyId
+      `Set enemy's HP, Death status
+      enemies(enemyId, 1) = 0
+
+      `Reset animation data
+      playAnimationTimers(enemyId, 1) = -1
+   next enemyId
+
+   `Remove all bullets
+   for curBulletId = bulletStartingId to bulletStartingId+maximumBulletsOnScreen
+      if object exist(curBulletId) then delete object curBulletId
+   next curBulletId
+
+   `Remove all coins
+   for coinId = collectableStartId to collectableEndId-collectableStartId
+      if object exist(coinId)
+         delete object coinId
+      endif
+   next coinId
+return
+
+InitialiseMainMenu:
+   menuXPos = 200
+   newMenuYPos = AddMenuItem(1, "Play", menuXPos, screen height()/2-100)
+   newMenuYPos = AddMenuItem(2, "Mode: ", menuXPos, newMenuYPos)
+   newMenuYPos = AddMenuItem(3, "Instructions", menuXPos, newMenuYPos)
+return
+
+ShowMainMenu:
+   onMainMenu = 1
+   updateSelectionTimer = timer()
+   `1 is mode
+   `2 is play button
+   `3 is instructions
+   selectedIndex = 1
+
+   backdrop off
+
+   set text size 60
+
+   gameMode = 1
+
+   repeat
+      cls
+
+      `Select menu item
+      if returnkey() = 1 or spacekey() = 1 or mouseclick() = 1
+         if selectedIndex = 1
+            onMainMenu = 0
+         endif
+
+         if selectedIndex = 2
+            if timer() - updateSelectionTimer >= 75
+               `Change gamemode
+                gameMode = gameMode + 1
+
+                if gameMode > 2
+                   gameMode = 1
+                endif
+
+               updateSelectionTimer = timer()
+            endif
+         endif
+
+         if selectedIndex = 3
+            paste image instructionsImage, 0, 0
+            suspend for key
+         endif
+      endif
+
+      `Change selected menu item
+      if timer() - updateSelectionTimer >= 75
+         if inkey$() = "s"
+            if selectedIndex < menuItemCount
+               selectedIndex = selectedIndex + 1
+            else
+               selectedIndex = 1
+            endif
+         endif
+
+         if inkey$() = "w"
+            if selectedIndex > 1
+               selectedIndex = selectedIndex - 1
+            else
+               selectedIndex = menuItemCount
+            endif
+         endif
+
+         updateSelectionTimer = timer()
+      endif
+
+      `Display each menu item
+      for menuItemNum = 1 to menuItemCount
+         menuItemTxt$ = menuItems$(menuItemNum, 1)
+
+         if menuItemNum = selectedIndex
+            menuItemTxt$ = ">" + menuItemTxt$
+         endif
+
+         `Magic numbers are awesome! /s
+         if menuItemNum = 2
+            if gameMode = 1
+               menuItemTxt$ = menuItemTxt$ + "Normal"
+            endif
+
+            if gameMode = 2
+               menuItemTxt$ = menuItemTxt$ + "Endless"
+            endif
+         endif
+
+         text menuItemPos(menuItemNum, 1), menuItemPos(menuItemNum, 2), menuItemTxt$
+      next menuItemNum
+
+      sync
+   until onMainMenu = 0
+
+   `make matrix 1, 10000.0, 10000.0, 25, 25
+
+   `Texture the matrix
+   `load image "floor1.bmp", matrixImage
+   `prepare matrix texture 1, matrixImage, 2, 2
+
+   `get image matrixImage, 0, 0, 256, 256, 1
+
+   backdrop on
+
+   gosub SetDefaultValues
+
+   set text size defaultTextSize
+
+   `Show floor, ceiling and walls
+   for object = boundaryObjectStart to maximumBoundaryObjects
+      if object exist(object) then show object object
+   next object
+
+   `Show collectables
+   for object = collectableStartId to collectableEndId
+      if object exist(object) then show object object
+   next object
+return
+
+SetDefaultValues:
+   cls
+
+   `Normal mode
+   if gameMode = 1
+      lastLevel = 13
+      currentEnemies = 0
+      currentLevel = 0
+      currentEnemyCountForLevel = startingEnemyCount + enemyIncrementPerLevel
+      enemySpeed = 3
+   endif
+
+   `Endless mode
+   if gameMode = 2
+      lastLevel = 999
+      enemyIncrementPerLevel = 2
+      startingEnemyCount = 2
+      currentEnemies = 0
+      currentLevel = 0
+      currentEnemyCountForLevel = startingEnemyCount + enemyIncrementPerLevel
+      enemySpeed = 3
+   endif
+
+   `Reset timer
+   gameTimer = timer()
+
+   gosub CleanUpLevel
+
+   set text size defaultTextSize
+
+   `Score, won game, lost game
+   gameState(1, 1) = 0
+   gameState(1, 2) = 0
+   gameState(1, 3) = 0
+
+   `Update current model
+   swapCurrentGun = 1
+return
+
+`Can't use this even though the editor highlights the syntax.
+`Only available in DB Pro, how lovely.
+`Declare the enemy type.
+`type SkeletonEnemy
+   `Health
+   `IsDead
+`endtype
+
+MakeCollectables:
+   for i = 1 to collectableEndId-collectableStartId
+      collectableId = i+collectableStartId
+      if object exist(collectableId)
+         `Spin each collectable
+         yrotate object collectableId, object angle y(collectableId)+2
+      else
+         make object sphere collectableId, 50
+         `Randomly generate the coin's position
+         position object collectableId, Random(xLowBoundary+100, xMaxBoundary-100), yPos, Random(zLowBoundary+100, zMaxBoundary-100)
+         texture object collectableId, coinImage
+
+         set object rotation xyz collectableId
+
+         `Setup object collision: collectableId, into group 1, with collision type box (2)
+         setupObjectDBC(collectableId, 1, 2)
+      endif
+   next i
+return
+
+SpinCollectables:
+   for i = 1 to collectableEndId-collectableStartId
+      collectableId = i+collectableStartId
+      if object exist(collectableId)
+         `Spin each collectable
+         yrotate object collectableId, object angle y(collectableId)+2
+      endif
+   next i
+return
+
+ChangeLevelNotification:
+   `text 0, 90, str$(levelChangeTimer(1, 2)) + ":" + str$(timer() - levelChangeTimer(1, 2)) + ":" + str$(levelChangeDisplayTime)
+   if currentEnemies = 0 and currentLevel <> lastLevel and levelChangeTimer(1, 2) = 0
+      `Begin level transition effect timer
+      levelChangeTimer(1, 1) = 1
+      levelChangeTimer(1, 2) = timer()
+   endif
+
+   if levelChangeTimer(1, 1) = 1
+      if timer() - levelChangeTimer(1, 2) > levelChangeDisplayTime
+         levelChangeTimer(1, 1) = 0
+         levelChangeTimer(1, 2) = 0
+      endif
+
+      `Display "cinematic" level change
+      center text screen width()/2, screen height()/2, "Level " + str$(currentLevel+1)
+   endif
+return
+
+SpawnEnemies:
+   `Control enemy spawning per level - don't start until the change level notification is done
+   if currentEnemies = 0 and levelChangeTimer(1, 1) = 0
+      if currentLevel = lastLevel
+         `Show finished screen
+         gameState(1, 2) = 1
+         goto RestartGame
+      else
+         `Generate next wave
+         gosub CleanUpLevel
+
+         currentLevel = currentLevel + 1
+         currentEnemyCountForLevel = startingEnemyCount + currentLevel
+         currentCoinsForLevel = 0
+
+         gosub MakeCollectables
+
+         `Set seed, ready for pseudorandom number generation
+         randomize timer()
+
+         `text 0, 20, str$(currentEnemyCountForLevel)
+         for enemyId = 1 to currentEnemyCountForLevel
+             `Set enemy's death status
+            enemies(enemyId, 1) = 0
+            load object "Models\Bones\H-Bones-Move.x", enemyId
+            `By default it's backwards
+            yrotate object enemyId, 180
+            `Set the defaults for angles on this object to current rotation
+            fix object pivot enemyId
+            `The reason for the rnd(n)+n2 is because the random number generator doesn't accept a minimum
+            `value. It always starts at 0, so adding 500 will ensure that it's over 500.
+            `We set the position of the enemies close to the player.
+            position object enemyId, camera position x() + Random(500, 1500), 40, camera position z() + Random(500, 1500)
+            `position object i, rnd(500), 40, rnd(500)+250
+            scale object enemyId, 8000, 8000, 8000
+
+            set object rotation xyz enemyId
+
+            `Setup object collision: enemyId, into group 1, with collision type box (2)
+            setupObjectDBC(enemyId, 1, 2)
+
+            loop object enemyId
+
+            currentEnemies = currentEnemies + 1
+         next enemyId
+
+         `Increase enemy speed every 2 levels
+         if Mod(currentLevel, 2) = 0
+            enemySpeed = enemySpeed + 1
+         endif
+
+         `Increase ammo for each gun by two clips per level
+         for i = 1 to totalAmountOfGuns
+            gunInfo(i, 2) = gunInfo(i, 2) + (gunInfo(i, 1)*2)
+         next i
+      endif
+   endif
+return
+
+ControlEnemies:
+   `Control enemy following player and shooting
+   `Because "point object" was changing the x and z angles we rememeber them
+   `and restore them after pointing the objects towards the camera
+   for i = 1 to currentEnemyCountForLevel
+      `If object exists and the enemy isn't dead
+      if object exist(i) and enemies(i, 1) = 0
+         dim angs(1, 2)
+         angs(1, 1) = object angle x(i)
+         angs(1, 2) = object angle z(i)
+         point object i, camera position x(), camera position y(), camera position z()
+         xrotate object i, angs(1, 1)
+         zrotate object i, angs(1, 2)
+
+         `Move enemies towards player
+         move object i, enemySpeed
+         updateObjectDBC(i)
+      endif
+   next i
+return
+
+PositionCamera:
+   `Using keystates instead of inkey, due to inkey blocking the inputs weirdly.
+   `Up
+   if keystate(17) = 1
+      move camera moveRate
+   endif
+
+   `Left
+   if keystate(30) = 1
+      oldY = camera angle y()
+      newY = wrapvalue(oldY-90)
+      yrotate camera newY
+      move camera moveRate
+      yrotate camera oldY
+   endif
+
+   `Down
+   if keystate(31) = 1
+      move camera moveRate*-1
+   endif
+
+   `Right
+   if keystate(32) = 1
+      oldY = camera angle y()
+      newY = wrapvalue(oldY+90)
+      yrotate camera newY
+      move camera moveRate
+      yrotate camera oldY
+   endif
+
+   `Ensure player doesn't go outside of room
+   if camera position x() < xLowBoundary
+      position camera xLowBoundary, camera position y(), camera position z()
+   endif
+
+   if camera position x() > xMaxBoundary
+      position camera  xMaxBoundary, camera position y(), camera position z()
+   endif
+
+   if camera position z() < zLowBoundary
+      position camera camera position x(), camera position y(), zLowBoundary
+   endif
+
+   if camera position z() > zMaxBoundary
+       position camera camera position x(), camera position y(), zMaxBoundary
+   endif
+
+   `Control camera using mouse - a lot more precision than just keyboard
+   xrotate camera wrapvalue(camera angle x()+mousemovey()*0.3)
+   yrotate camera wrapvalue(camera angle y()+mousemovex()*0.3)
+   zrotate camera 0
+
+   `Ensure we don't go under the floor or start flying...
+   position camera camera position x(), yPos, camera position z()
+return
+
+SelectCurrentGun:
+   if timer() - selectGunTimer >= 100
+      if inkey$() = "q"
+         currentGunArrayId = currentGunArrayId - 1
+         if currentGunArrayId < 1
+            currentGunArrayId = 1
+         endif
+         swapCurrentGun = 1
+         selectGunTimer = timer()
+      endif
+
+      if inkey$() = "e"
+         currentGunArrayId = currentGunArrayId + 1
+         if currentGunArrayId > totalAmountOfGuns
+            currentGunArrayId = totalAmountOfGuns
+         endif
+         swapCurrentGun = 1
+         selectGunTimer = timer()
+      endif
+
+      if currentLevel < gunInfo(currentGunArrayId, 7)
+         `Not high enough level for this weapon
+         currentGunArrayId = currentGunArrayId - 1
+      endif
+   endif
+
+   `This loop is used to detect if a gun has been recently unlocked
+   for i = 1 to totalAmountOfGuns
+      if gunInfo(i, 8) = 0 and currentLevel = gunInfo(i, 7)
+         `Just unlocked new weapon - start timer
+         gunInfo(i, 8) = 1
+         newGunUnlocked(1, 1) = timer()
+         newGunUnlocked(1, 2) = i
+      endif
+
+      `Show new gun unlocked notification if one has been recently unlocked
+      if newGunUnlocked(1, 1) <> -1
+         center text screen width()/2, screen height()/2, "New weapon unlocked: " + gunStringData$(newGunUnlocked(1, 2), 2)
+
+         if timer() - newGunUnlocked(1, 1) >= newGunUnlockDisplayTime
+            `Displayed the notification for enough time, remove it.
+            newGunUnlocked(1, 1) = -1
+         endif
+      endif
+   next i
+
+
+   if gunInfo(currentGunArrayId, 8) = 1 and swapCurrentGun = 1
+      `Ensure that we delete the previous gun model before using the same ID.
+      `Since we're only deleting the model if the gun is swapped it doesn't really matter,
+      `and won't effect the game if we load the model during play time.
+      if object exist(startingGunId)
+         delete object startingGunId
+      endif
+
+      `Load in the gun to use and position it a tiny bit under the camera
+      load object gunStringData$(currentGunArrayId, 1), startingGunId
+      scale object startingGunId, 5000, 5000, 5000
+      position object startingGunId, 0, -7, 13
+      lock object on startingGunId
+
+      swapCurrentGun = 0
+   endif
+return
+
+ReloadCurrentGun:
+   `Check if we have enough ammo in clip before firing
+   if gunInfo(currentGunArrayId, 1) <= 0
+      `No ammo in clip or reserve? Tell them to swap weapons
+      if gunInfo(currentGunArrayId, 2) <= 0
+         text screen width()/2, 0, "Completely out of ammo"
+      else
+         text screen width()/2, 0, "Reload - Empty clip"
+      endif
+   endif
+
+   `Ammo/reloading mechanism - Only activate reload ability if the gun has ammo in reserves
+   if gunInfo(currentGunArrayId, 2) > 0
+      `Store the current gun Id in a temporary variable - in case the user changes guns during this process
+      tmpGunId = currentGunArrayId
+      if gunTimers(tmpGunId, 2) = 1
+         `Calculate and display reload time based off the time it will take to reload, our timer, and the current time
+         `There's no floor or ceil...
+         `This language...
+         text 120, 0, "Reloading... " + str$((gunInfo(tmpGunId, 4) - (timer() - gunTimers(tmpGunId, 1))) / 1000)
+
+         `Ensure that the gun has enough ammo to be refilled
+         if gunInfo(tmpGunId, 2) > 0
+            `Get the amount of ammo to load into the clip from the reserve
+            ammoToLoad = (gunInfo(tmpGunId, 3) - gunInfo(tmpGunId, 1))
+
+            `Check if it has been the time that it takes to reload the current weapon
+            if timer() - gunTimers(tmpGunId, 1) >= gunInfo(tmpGunId, 4)
+               gunInfo(tmpGunId, 2) = gunInfo(tmpGunId, 2) - ammoToLoad
+               gunInfo(tmpGunId, 1) = gunInfo(tmpGunId, 1) + ammoToLoad
+               gunTimers(tmpGunId, 1) = timer()
+               gunTimers(tmpGunId, 2) = 0
+            endif
+         endif
+      else
+         if inkey$() = "r"
+            `Check if we actually need to reload
+            if gunInfo(currentGunArrayId, 1) < gunInfo(currentGunArrayId, 3)
+               gunTimers(currentGunArrayId, 1) = timer()
+               gunTimers(currentGunArrayId, 2) = 1
+            endif
+         endif
+      endif
+   endif
+return
+
+`Current Clip, Total ammo, Reload amount (How much is reloaded at a time), Reload time, Gun sound ID, Rate (in milliseconds) per shot
+ShootCurrentGun:
+   if mouseclick() = 1
+      `Ensure we aren't reloading and shooting at the same time
+      if gunTimers(currentGunArrayId, 2) = 0
+         `Check if the timer is over the fire rate of the chosen gun
+         if (Timer() - gunTimers(currentGunArrayId, 1)) >= gunInfo(currentGunArrayId, 6)
+            if gunInfo(currentGunArrayId, 1) > 0
+               `Find a bullet object that isn't in use.
+               for i = 1 to maximumBulletsOnScreen
+                  curBulletId = bulletStartingId+i
+                  if object exist(curBulletId)
+                     `Don't use current object as it already exists
+                  else
+                     gunInfo(currentGunArrayId, 1) = gunInfo(currentGunArrayId, 1) - 1
+                     `Create bullet and set default properties
+                     make object sphere curBulletId, 2
+                     color object curBulletId, rgb(0, 0, 0)
+                     position object curBulletId, camera position x(), camera position y()-7, camera position z()
+                     `set object collision on curBulletId
+                     `set object collision to boxes curBulletId
+                     set object to camera orientation curBulletId
+
+                     set object rotation xyz curBulletId
+
+                     `Setup object curBulletId, into group 2, with collision type box (2)
+                     setupObjectDBC(curBulletId, 2, 2)
+
+                     `Set alive to true and health to 25
+                     bullets(i, 1) = bulletMaxHealth
+
+                     `Exit loop, we found an open spot and made our bullet
+                     exit
+                  endif
+               next i
+
+               if sound exist(gunInfo(currentGunArrayId, 5))
+                  play sound gunInfo(currentGunArrayId, 5)
+                  set sound volume gunInfo(currentGunArrayId, 5), 4
+               endif
+
+               gunTimers(currentGunArrayId, 1) = timer()
+            endif
+         endif
+      endif
+   endif
+return
+
+ControlBulletMovement:
+   for i = 1 to maximumBulletsOnScreen
+      curBulletId = bulletStartingId+i
+      if object exist(curBulletId)
+         if bullets(i, 1) <= 0
+            `Set bullet health to 0, meaning it isn't in use and has been removed
+            bullets(i, 1) = 0
+            delete object curBulletId
+         else
+            `Decrease bullet life and move it further
+            bullets(i, 1) = bullets(i, 1) - 1
+            move object curBulletId, bulletSpeed
+            updateObjectDBC(curBulletId)
+         endif
+      endif
+   next i
+return
+
+ObjectCollision:
+   `Check if bullets hit enemies
+   for bulletArrId = 1 to maximumBulletsOnScreen
+      curBulletId = bulletArrId+bulletStartingId
+      if object exist(curBulletId)
+         `Checking for collision of bullets and enemies.
+         `This uses a raycast, creating an invisible line between the camera and the bullet.
+         `Useful way of collision detection. Also means the bullet can be as fast as you want without
+         `any "missed" collisions
+         enemyCollision = intersectObjectDBC(1, 1, camera position x(), camera position y(), camera position z(), object position x(curBulletId), object position y(curBulletId), object position z(curBulletId), curBulletId)
+
+         `We've hit a skeleton
+         if enemyCollision >= 1 and enemyCollision <= currentEnemyCountForLevel and enemies(enemyArrId, 1) = 0
+            gameState(1, 1) = gameState(1, 1) + enemyKillScoreBonus
+
+            `objectId, model$, animationLength, animationFirstFrame, animationLastFrame, destroyObjectAfterAnimation
+            PlayAnimation(enemyCollision, "Models\Bones\H-Bones-Die.x", 3000, 1, 24, 1)
+
+            enemies(enemyCollision, 1) = 1
+            currentEnemies = currentEnemies - 1
+
+            delete object curBulletId
+            bullets(bulletArrId, 1) = 0
+
+            setObjectCollisionOffDBC(enemyCollision)
+         endif
+      endif
+   next curBulletId
+
+   `Collect coin
+   for i = 1 to collectableEndId-collectableStartId
+      coinId = collectableStartId+i
+      if object exist(coinId)
+         distance = DistanceBetween(camera position x(), camera position y(), camera position z(), object position x(coinId), object position y(coinId), object position z(coinId))
+
+         `We're close enough to pickup the coin
+         if distance <= 90
+            delete object coinId
+            gameState(1, 1) = gameState(1, 1) + coinPickupScoreBonus
+            currentCoinsForLevel = currentCoinsForLevel + 1
+         endif
+      endif
+   next i
+return
+
+MakeWallsAndFloor:
+   startPos = boundaryObjectStart
+
+   `Parameters: startXPos, startYPos, startZPos, arrStartPos, objectWidth, objectHeight, objectDepth, objectType, numOfObjectsToGenerate, objectPerRow, imageId
+
+   `Generate floor
+   numToMake = 90
+   numPerRow = 6
+   objectWidth = 500
+   objectHeight = 1
+   objectDepth = 500
+   floorWidth = objectWidth
+   floorHeight = objectDepth
+   floorAndCeilingX = objectWidth/2
+   floorAndCeilingZ = objectDepth/2
+   GenerateBoundaryObject(floorAndCeilingX, 0, 0+objectHeight/2, startPos, objectWidth, objectHeight, objectDepth, 1, numToMake, numPerRow, 0)
+   startPos = startPos + numToMake
+
+   rightWallStartDistance = objectWidth*numPerRow
+   topWallStartPosition = (numToMake/numPerRow)*objectDepth
+
+   leftAndRightWallAmount = numToMake/numPerRow
+   topAndBottomWallAmount = numPerRow
+
+   zLowBoundary = 20-(objectDepth/2)
+
+   ceilingHeight = 800
+
+   `Generate ceiling
+   GenerateBoundaryObject(floorAndCeilingX, ceilingHeight, 0+objectHeight/2, startPos, objectWidth, objectHeight, objectDepth, 1, numToMake, numPerRow, 0)
+   startPos = startPos + numToMake
+
+   `Generate left walls
+   objectWidth = 50
+   objectHeight = ceilingHeight
+   objectDepth = 500
+   floorY = objectHeight/2
+   GenerateBoundaryObject(0-(objectWidth/2), floorY, 0, startPos, objectWidth, objectHeight, objectDepth, 2, leftAndRightWallAmount, 0, 0)
+   startPos = startPos + leftAndRightWallAmount
+
+   `Generate right walls
+   GenerateBoundaryObject(rightWallStartDistance+(objectWidth/2), floorY, 0, startPos, objectWidth, objectHeight, objectDepth, 2, leftAndRightWallAmount, 0, 0)
+   startPos = startPos + leftAndRightWallAmount
+
+   xLowBoundary = 0+objectWidth
+   xMaxBoundary = rightWallStartDistance-objectWidth
+
+   `Make bottom walls
+   objectWidth = 500
+   objectHeight = ceilingHeight
+   objectDepth = 50
+   GenerateBoundaryObject(0+floorAndCeilingX, floorY, 0-floorAndCeilingZ-(objectDepth/2), startPos, objectWidth, objectHeight, objectDepth, 3, topAndBottomWallAmount, 0, 0)
+   startPos = startPos + topAndBottomWallAmount
+
+   `Make top wall
+   `-floorAndCeilingZ+(objectHeight/2)
+   GenerateBoundaryObject(0+floorAndCeilingX, floorY, 0+topWallStartPosition-floorAndCeilingZ, startPos, objectWidth, objectHeight, objectDepth, 3, topAndBottomWallAmount, 0, 0)
+   startPos = startPos + topAndBottomWallAmount
+
+   zMaxBoundary = topWallStartPosition-floorAndCeilingZ-objectDepth
+return
+
+RestartGame:
+   waitTimer = timer()
+
+   `delete matrix 1
+   gosub CleanUpLevel
+
+   `Hide floor, ceiling and walls
+   for object = boundaryObjectStart to maximumBoundaryObjects
+      if object exist(object) then hide object object
+   next object
+
+   `Hide collectables
+   for object = collectableStartId to collectableEndId
+      if object exist(object) then hide object object
+   next object
+
+   `Hide current weapon
+   if object exist(startingGunId)
+     hide object startingGunId
+   endif
+
+   `Allow images on screen
+   backdrop off
+
+   score = gameState(1, 1)
+
+   `Detect if won or lost game.
+   if gameState(1, 2) = 1
+      `The user won
+      paste image youWonImage, 0, 0
+      set text size 30
+      text 260, 500, "Final score: " + str$(CalculateScore(score, gameTimer, scorePenalty))
+   endif
+
+   if gameState(1, 3) = 1
+      `The user lost
+      paste image youLostImage, 0, 0
+      set text size 30
+      text 260, 500, "Final score: " + str$(CalculateScore(score, gameTimer, scorePenalty))
+   endif
+
+   repeat
+      suspend for key
+   until timer() - waitTimer >= 1000
+
+   gosub SetDefaultValues
+
+   backdrop on
+
+   gosub ShowMainMenu
+return

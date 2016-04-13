@@ -1,0 +1,101 @@
+function setupObjectDBC(objNum,groupNum,objectType)
+    commonSetup(objNum)
+
+    vertData = get memblock ptr(254)
+    objectData = get memblock ptr(255)
+    call dll 1,"setupObject",objNum,groupNum,objectType,vertData,objectData
+
+    delete memblock 254
+endfunction
+
+function setupComplexObjectDBC(objNum,groupNum,facesPerNode)
+    commonSetup(objNum)
+
+    vertData = get memblock ptr(254)
+    objectData = get memblock ptr(255)
+    call dll 1,"setupComplexObject",objNum,groupNum,facesPerNode,vertData,objectData
+
+    delete memblock 254
+endfunction
+
+function commonSetup(objNum)
+    if dll exist(1)=0 then load dll "DBCcollision.dll",1
+    if memblock exist(255)=0 then make memblock 255,24
+
+    x#=object position x(objNum)
+    y#=object position y(objNum)
+    z#=object position z(objNum)
+    angx#=object angle x(objNum)
+    angy#=object angle y(objNum)
+    angz#=object angle z(objNum)
+
+    write memblock float 255,0,x#
+    write memblock float 255,4,y#
+    write memblock float 255,8,z#
+    write memblock float 255,12,angx#
+    write memblock float 255,16,angy#
+    write memblock float 255,20,angz#
+
+    position object objNum,0,0,0
+    rotate object objNum,0,0,0
+    make mesh from object 255,objNum
+    make memblock from mesh 254,255
+    delete mesh 255
+    position object objNum,x#,y#,z#
+    rotate object objNum,angx#,angy#,angz#
+endfunction
+
+function updateObjectDBC(objNum)
+    if memblock exist(255)=0 then make memblock 255,24
+
+    write memblock float 255,0,object position x(objNum)
+    write memblock float 255,4,object position y(objNum)
+    write memblock float 255,8,object position z(objNum)
+    write memblock float 255,12,object angle x(objNum)
+    write memblock float 255,16,object angle y(objNum)
+    write memblock float 255,20,object angle z(objNum)
+
+    objectData = get memblock ptr(255)
+
+    call dll 1,"updateObject",objNum,objectData
+endfunction
+
+function intersectObjectDBC(objNum,groupFlag,oldx#,oldy#,oldz#,x#,y#,z#,excludeObj)
+    collide=call dll(1,"intersectObject",objNum,groupFlag,oldx#,oldy#,oldz#,x#,y#,z#,excludeObj)
+endfunction collide
+
+function setObjectCollisionOnDBC(objNum)
+    call dll 1,"set_object_collision_on",objNum
+endfunction
+
+function setObjectCollisionOffDBC(objNum)
+    call dll 1,"set_object_collision_off",objNum
+endfunction
+
+function collisionStatusDBC(objNum)
+    result=call dll(1,"collisionstatus",objNum)
+endfunction result
+
+function getStaticCollisionX()
+    result#=call dll(1,"getStaticCollisionX")
+endfunction result#
+
+function getStaticCollisionY()
+    result#=call dll(1,"getStaticCollisionY")
+endfunction result#
+
+function getStaticCollisionZ()
+    result#=call dll(1,"getStaticCollisionZ")
+endfunction result#
+
+function getCollisionNormalX()
+    result#=call dll(1,"getCollisionNormalX")
+endfunction result#
+
+function getCollisionNormalY()
+    result#=call dll(1,"getCollisionNormalY")
+endfunction result#
+
+function getCollisionNormalZ()
+    result#=call dll(1,"getCollisionNormalZ")
+endfunction result#
