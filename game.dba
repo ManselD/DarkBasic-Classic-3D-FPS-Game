@@ -95,6 +95,8 @@ coinImage = 4
 spookyScarySkeletonSong = 1
 ramaEasterEggSound = 20
 pistolGunShotSound = 40
+ak47GunShotSound = 41
+mp40GunShotSound = 42
 
 xLowBoundary = 0
 xMaxBoundary = 0
@@ -136,6 +138,8 @@ set text size defaultTextSize
 
 gameTimer = timer()
 
+`This main loop is where everything starts (after the user starts a game anyway)
+`This is where any major logic occurs.
 do
    `get image 1,0,0,256,256
    `prepare matrix texture 1,1,2,2
@@ -214,39 +218,37 @@ do
    gosub EasterEgg
 
    `Small display
-    timeSpentInSeconds = (timer()-gameTimer)/1000
-    text 0, 0, "FPS: " + str$(screen fps())
+   timeSpentInSeconds = (timer()-gameTimer)/1000
+   text 0, 0, "FPS: " + str$(screen fps())
 
    `Dark basic doesn't like concatenating too many variables together?
-    `So we have to unnecessarily make more variables than are needed.
-    scoreCalculation = gameState(1, 1) - CalculateScore(gameState(1, 1), gameTimer, scorePenalty)
-    newScore$ = " (-" + str$(scoreCalculation) + ")"
+   `So we have to unnecessarily make more variables than are needed.
+   scoreCalculation = gameState(1, 1) - CalculateScore(gameState(1, 1), gameTimer, scorePenalty)
+   newScore$ = " (-" + str$(scoreCalculation) + ")"
 
    `Only show time penalty if there is one
-    if timeSpentInSeconds >= 60
-       text 0, 15, "Score: " + str$(gameState(1, 1)) + newScore$
-    else
-       text 0, 15, "Score: " + str$(gameState(1, 1))
-    endif
+   if timeSpentInSeconds >= 60
+      text 0, 15, "Score: " + str$(gameState(1, 1)) + newScore$
+   else
+      text 0, 15, "Score: " + str$(gameState(1, 1))
+   endif
 
    text 0, 30, "Enemies: " + str$(currentEnemies) + " / " + str$(currentEnemyCountForLevel)
-    text 0, 45, "Coins: " + str$(currentCoinsForLevel) + " / " + str$(amountOfCollectables)
-    text 0, 60, "Level: " + str$(currentLevel) + " / " + str$(lastLevel)
-    text 0, 75, "Time: " + str$(timeSpentInSeconds)
+   text 0, 45, "Coins: " + str$(currentCoinsForLevel) + " / " + str$(amountOfCollectables)
+   text 0, 60, "Level: " + str$(currentLevel) + " / " + str$(lastLevel)
+   text 0, 75, "Time: " + str$(timeSpentInSeconds)
 
-    `Auto adjust the text to the right side of the screen; using the string's length to determine the position.
-    ammoText$ = "Ammo: " + str$(gunInfo(currentGunArrayId, 1)) + " / " + str$(gunInfo(currentGunArrayId, 2))
-    text screen width() - (text width(ammoText$) + 2), 0, ammoText$
+   `Auto adjust the text to the right side of the screen; using the string's length to determine the position.
+   ammoText$ = "Ammo: " + str$(gunInfo(currentGunArrayId, 1)) + " / " + str$(gunInfo(currentGunArrayId, 2))
+   text screen width() - (text width(ammoText$) + 2), 0, ammoText$
 
-    gunText$ = "Gun: " + gunStringData$(currentGunArrayId, 2)
-    text screen width() - (text width(gunText$) + 2), 15, gunText$
-    displayLevelTextTimer = timer()
+   gunText$ = "Gun: " + gunStringData$(currentGunArrayId, 2)
+   text screen width() - (text width(gunText$) + 2), 15, gunText$
+   displayLevelTextTimer = timer()
    sync
 loop
 
-
-
-`Load resources - self-explanatory
+`Loads any resources (sounds, images, and models) that are used in the game
 LoadResources:
    `Load dll
    load dll "SparkyCollision.dll", 1
@@ -264,6 +266,10 @@ LoadResources:
    `Load sounds
    load sound "Sounds\Pistol gun fire.mp3", pistolGunShotSound
 
+   load sound "Sounds\Ak47 gun fire.wav", ak47GunShotSound
+
+   load sound "Sounds\Mp40 gun fire.wav", mp40GunShotSound
+
    `Easter egg :)
    load sound "Sounds\Rama secret laugh.mp3", ramaEasterEggSound
 
@@ -273,11 +279,8 @@ LoadResources:
    set sound volume spookyScarySkeletonSong, 2
    loop sound spookyScarySkeletonSong
 
-   `gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel, gunName, unlockLevel
-   AddWeapon(1, 6, 30, 6, 2000, pistolGunShotSound, 500, "Models\Weapons\colt\H-Colt-Static.x", "Pistol", 1)
-   AddWeapon(2, 12, 60, 12, 4000, pistolGunShotSound, 250, "Models\Weapons\ak47\H-AK47-Static.x", "AK47", 3)
-   AddWeapon(3, 24, 120, 24, 5000, pistolGunShotSound, 100, "Models\Weapons\mp40\H-MP40-Static.x", "MP40", 6)
-   `AddWeapon(4, 1000, 5000, 1000, 0, 1, 25, "Models\Weapons\tommy\H-Tommy-Static.x", "Tommy", 1)
+   gosub SetDefaultValues
+   gosub SetDefaultGunValues
 
    `Set default position
    position camera xLowBoundary+1000, yPos, zLowBoundary+1000
@@ -285,26 +288,23 @@ LoadResources:
    gosub InitialiseMainMenu
 return
 
+SetDefaultGunValues:
+   `gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel, gunName, unlockLevel
+   AddWeapon(1, 6, 30, 6, 2000, pistolGunShotSound, 500, "Models\Weapons\colt\H-Colt-Static.x", "Pistol", 1)
+   AddWeapon(2, 12, 60, 12, 3000, ak47GunShotSound, 250, "Models\Weapons\ak47\H-AK47-Static.x", "AK47", 3)
+   AddWeapon(3, 24, 120, 24, 4000, mp40GunShotSound, 100, "Models\Weapons\mp40\H-MP40-Static.x", "MP40", 6)
+   `AddWeapon(4, 1000, 5000, 1000, 0, 1, 25, "Models\Weapons\tommy\H-Tommy-Static.x", "Tommy", 1)
+return
+
 `START FUNCTIONS
-
-function DisplayAutoSizedText(txt$, position, y)
-   if position = LEFT
-      text 0, y, txt$
-   endif
-
-   if position = RIGHT
-      text screen width() - (text width(txt$) + 2), y, txt$
-   endif
-
-   y = y + text height(txt$)
-endfunction y
-
-`Modulus - returns the remainder of a division calculation
+`Modulus - returns the remainder of a division
+`Made by Latch; found here: https://forum.thegamecreators.com/thread/157256
 function Mod(num,modulus)
    value=num-((num/modulus)*modulus)
 endfunction value
 
-`Gets the distance between two positions
+`Gets the distance between two positions in 3D space
+`Made by pictionaryjr; found here: https://forum.thegamecreators.com/thread/182850
 function DistanceBetween(x1#,y1#,z1#,x2#,y2#,z2#)
    d#=sqrt(((x2#-x1#)*(x2#-x1#))+((y2#-y1#)*(y2#-y1#))+((z2#-z1#)*(z2#-z1#)))
 endfunction d#
@@ -341,6 +341,7 @@ function PlayAnimation(objectId, model$, animationLength, animationFirstFrame, a
    endif
 endfunction
 
+`Generates the floor/ceiling and left/right/bottom/top walls. These are boundary walls.
 `Object types: 1: Floor/ceiling
 `2: Left/right wall
 `3: Bottom/top wall
@@ -392,6 +393,7 @@ function GenerateBoundaryObject(startXPos, startYPos, startZPos, arrStartPos, ob
    next i
 endfunction
 
+`This function is used later on, to simply adding weapons.
 `Add data into arrays and load the model into a specified ID.
 function AddWeapon(gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel$, gunName$, unlockLevel)
    `Load object into specified ID
@@ -438,6 +440,7 @@ function CalculateScore(currentScore, gameTimer, scorePenalty)
    endif
 endfunction score
 
+`Much like the AddWeapon function, it simplifies the menu adding process.
 `Returns the new y position (+offset - used for the next item)
 function AddMenuItem(id, txt$, x, y)
    menuItems$(id, 1) = txt$
@@ -447,6 +450,7 @@ function AddMenuItem(id, txt$, x, y)
 endfunction y
 `END FUNCTIONS
 
+`Easter egg, plays if the user presses V + E + L at the same time.  Plays rama's laugh from Smite.
 EasterEgg:
    if keystate(47) = 1 and keystate(18) = 1 and keystate(38) = 1
       play sound ramaEasterEggSound
@@ -454,6 +458,7 @@ EasterEgg:
    endif
 return
 
+`Removes any remaining objects from the screen. Used when transitioning from a game to a win/lose screen.
 CleanUpLevel:
    `Remove all enemies
    for enemyId = 1 to totalPossibleEnemyCount
@@ -478,6 +483,7 @@ CleanUpLevel:
    next coinId
 return
 
+`Adds all of the items to the main menu
 InitialiseMainMenu:
    menuXPos = 200
    newMenuYPos = AddMenuItem(1, "Play", menuXPos, screen height()/2-100)
@@ -485,9 +491,13 @@ InitialiseMainMenu:
    newMenuYPos = AddMenuItem(3, "Instructions", menuXPos, newMenuYPos)
 return
 
+`Shows the main menu
+`Goes through the array that contains the menu items and prints them to the screen.
+`Also uses an index to store what menu is currently selected.
 ShowMainMenu:
    onMainMenu = 1
    updateSelectionTimer = timer()
+   instructionsMenuTimer = timer()
    `1 is mode
    `2 is play button
    `3 is instructions
@@ -522,8 +532,11 @@ ShowMainMenu:
          endif
 
          if selectedIndex = 3
-            paste image instructionsImage, 0, 0
-            suspend for key
+            repeat
+               paste image instructionsImage, 0, 0
+               suspend for key
+            until timer() - instructionsMenuTimer >= 1500
+            instructionsMenuTimer = timer()
          endif
       endif
 
@@ -573,14 +586,6 @@ ShowMainMenu:
       sync
    until onMainMenu = 0
 
-   `make matrix 1, 10000.0, 10000.0, 25, 25
-
-   `Texture the matrix
-   `load image "floor1.bmp", matrixImage
-   `prepare matrix texture 1, matrixImage, 2, 2
-
-   `get image matrixImage, 0, 0, 256, 256, 1
-
    backdrop on
 
    gosub SetDefaultValues
@@ -598,6 +603,8 @@ ShowMainMenu:
    next object
 return
 
+`Sets the default values for the game
+`Useful when transitioning between game and win/lose screen
 SetDefaultValues:
    cls
 
@@ -628,6 +635,8 @@ SetDefaultValues:
 
    set text size defaultTextSize
 
+   gosub SetDefaultGunValues
+
    `Score, won game, lost game
    gameState(1, 1) = 0
    gameState(1, 2) = 0
@@ -645,6 +654,7 @@ return
    `IsDead
 `endtype
 
+`Spawns the 5 collectables for the level
 MakeCollectables:
    for i = 1 to collectableEndId-collectableStartId
       collectableId = i+collectableStartId
@@ -665,6 +675,7 @@ MakeCollectables:
    next i
 return
 
+`Spins any collectables 360 degrees
 SpinCollectables:
    for i = 1 to collectableEndId-collectableStartId
       collectableId = i+collectableStartId
@@ -675,6 +686,7 @@ SpinCollectables:
    next i
 return
 
+`Show the change level notification if we are in the middle of changing level
 ChangeLevelNotification:
    `text 0, 90, str$(levelChangeTimer(1, 2)) + ":" + str$(timer() - levelChangeTimer(1, 2)) + ":" + str$(levelChangeDisplayTime)
    if currentEnemies = 0 and currentLevel <> lastLevel and levelChangeTimer(1, 2) = 0
@@ -694,6 +706,9 @@ ChangeLevelNotification:
    endif
 return
 
+`This subroutine is one of the most important ones.
+`Positions the enemies towards the player (camera)
+`Enemies are only spawned after every level (when the enemy count is set to 0)
 SpawnEnemies:
    `Control enemy spawning per level - don't start until the change level notification is done
    if currentEnemies = 0 and levelChangeTimer(1, 1) = 0
@@ -753,8 +768,9 @@ SpawnEnemies:
    endif
 return
 
+`Makes the enemies walk towards the player
 ControlEnemies:
-   `Control enemy following player and shooting
+   `Control enemy following player
    `Because "point object" was changing the x and z angles we rememeber them
    `and restore them after pointing the objects towards the camera
    for i = 1 to currentEnemyCountForLevel
@@ -774,6 +790,7 @@ ControlEnemies:
    next i
 return
 
+`Gives the player control of the camera
 PositionCamera:
    `Using keystates instead of inkey, due to inkey blocking the inputs weirdly.
    `Up
@@ -830,6 +847,7 @@ PositionCamera:
    position camera camera position x(), yPos, camera position z()
 return
 
+`Allows the player to switch between characters if they have unlocked them
 SelectCurrentGun:
    if timer() - selectGunTimer >= 100
       if inkey$() = "q"
@@ -895,6 +913,7 @@ SelectCurrentGun:
    endif
 return
 
+`Allows the user to reload their current gun if they have enough ammo in their reserves
 ReloadCurrentGun:
    `Check if we have enough ammo in clip before firing
    if gunInfo(currentGunArrayId, 1) <= 0
@@ -906,10 +925,11 @@ ReloadCurrentGun:
       endif
    endif
 
+   `Store the current gun Id in a temporary variable - in case the user changes guns during this process
+   tmpGunId = currentGunArrayId
+
    `Ammo/reloading mechanism - Only activate reload ability if the gun has ammo in reserves
-   if gunInfo(currentGunArrayId, 2) > 0
-      `Store the current gun Id in a temporary variable - in case the user changes guns during this process
-      tmpGunId = currentGunArrayId
+   if gunInfo(tmpGunId, 2) > 0
       if gunTimers(tmpGunId, 2) = 1
          `Calculate and display reload time based off the time it will take to reload, our timer, and the current time
          `There's no floor or ceil...
@@ -932,15 +952,16 @@ ReloadCurrentGun:
       else
          if inkey$() = "r"
             `Check if we actually need to reload
-            if gunInfo(currentGunArrayId, 1) < gunInfo(currentGunArrayId, 3)
-               gunTimers(currentGunArrayId, 1) = timer()
-               gunTimers(currentGunArrayId, 2) = 1
+            if gunInfo(tmpGunId, 1) < gunInfo(tmpGunId, 3)
+               gunTimers(tmpGunId, 1) = timer()
+               gunTimers(tmpGunId, 2) = 1
             endif
          endif
       endif
    endif
 return
 
+`Allows the user to shoot their current gun, as long as it's been enough time from the last shot.
 `Current Clip, Total ammo, Reload amount (How much is reloaded at a time), Reload time, Gun sound ID, Rate (in milliseconds) per shot
 ShootCurrentGun:
    if mouseclick() = 1
@@ -989,6 +1010,7 @@ ShootCurrentGun:
    endif
 return
 
+`Moves any bullets that have life left, otherwise they are deleted.
 ControlBulletMovement:
    for i = 1 to maximumBulletsOnScreen
       curBulletId = bulletStartingId+i
@@ -1007,6 +1029,7 @@ ControlBulletMovement:
    next i
 return
 
+`Check if bullets have hit enemies (kill them if so) and check if the player hit a skeleton (they lose if they do)
 ObjectCollision:
    `Check if bullets hit enemies
    for bulletArrId = 1 to maximumBulletsOnScreen
@@ -1052,6 +1075,7 @@ ObjectCollision:
    next i
 return
 
+`Generates the boundary objects which the player is contained in
 MakeWallsAndFloor:
    startPos = boundaryObjectStart
 
@@ -1114,6 +1138,7 @@ MakeWallsAndFloor:
    zMaxBoundary = topWallStartPosition-floorAndCeilingZ-objectDepth
 return
 
+`Restarts the game by hiding any objects used and then showing the appropriate screen (win/lose)
 RestartGame:
    waitTimer = timer()
 
