@@ -125,7 +125,7 @@ onMainMenu = 1
 `Load resources used for the game
 gosub LoadResources
 
-`Show the main menu
+`Show the main menu - there's a loop inside of this subroutine which keeps going until an option is selected.
 gosub ShowMainMenu
 
 `Used for tracking when to display text
@@ -139,7 +139,8 @@ set text size defaultTextSize
 gameTimer = timer()
 
 `This main loop is where everything starts (after the user starts a game anyway)
-`This is where any major logic occurs.
+`This is where any major logic occurs. This is where all of the other subroutines are called. Certain bits of the code are split up into subroutines
+`in order to modularise the code and spread it out a bit. It does seem to make it more understandable.
 do
    `get image 1,0,0,256,256
    `prepare matrix texture 1,1,2,2
@@ -248,7 +249,9 @@ do
    sync
 loop
 
-`Loads any resources (sounds, images, and models) that are used in the game
+`Loads any resources (sounds, images, and models) that are used in the game into memory so that
+`they can be used later on. If models etc... are loaded when the game is running then it will cause
+`the game to freeze due to it not being multithreaded.
 LoadResources:
    `Load dll
    load dll "SparkyCollision.dll", 1
@@ -260,7 +263,6 @@ LoadResources:
    load image "Images\Instructions.png", instructionsImage
    load image "Images\You-won.png", youWonImage
    load image "Images\You-lost.png", youLostImage
-   `load image "Images\grid.png", floorImage
    load image "Images\nicolas-cage-coin.png", coinImage
 
    `Load sounds
@@ -288,6 +290,7 @@ LoadResources:
    gosub InitialiseMainMenu
 return
 
+`This subroutine adds all of the weapons into the weapons table
 SetDefaultGunValues:
    `gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel, gunName, unlockLevel
    AddWeapon(1, 6, 30, 6, 2000, pistolGunShotSound, 500, "Models\Weapons\colt\H-Colt-Static.x", "Pistol", 1)
@@ -311,6 +314,7 @@ endfunction d#
 
 `The id of the object to change animation and play it, the animation or model, the length of the animation in ms,
 `The number of the first frame, the number of the last frame, if the object should be destroyed after the animation has finished
+`This function plays an animation on a specified model for a specified amount of time. Mainly used for the enemies
 function PlayAnimation(objectId, model$, animationLength, animationFirstFrame, animationLastFrame, destroyObjectAfterAnimation)
    if object exist(objectId)
       if playAnimationTimers(objectId, 1) = -1
@@ -393,7 +397,7 @@ function GenerateBoundaryObject(startXPos, startYPos, startZPos, arrStartPos, ob
    next i
 endfunction
 
-`This function is used later on, to simply adding weapons.
+`This function is used later on, for simply adding weapons.
 `Add data into arrays and load the model into a specified ID.
 function AddWeapon(gunId, currentClip, totalAmmo, reloadAmount, reloadTime, gunSoundId, ratePerShot, gunModel$, gunName$, unlockLevel)
    `Load object into specified ID
@@ -505,7 +509,7 @@ ShowMainMenu:
 
    backdrop off
 
-   set text size 60
+   set text size 50
 
    gameMode = 1
 
@@ -709,6 +713,10 @@ return
 `This subroutine is one of the most important ones.
 `Positions the enemies towards the player (camera)
 `Enemies are only spawned after every level (when the enemy count is set to 0)
+`This subroutine generates the enemies if all enemies have been wiped out for the current level.
+`It goes through each enemy (the amount) that should be on the field on the current level
+`sets the model to the right one, faces them towards the player, scales it correctly, then sets up
+`the collision object.
 SpawnEnemies:
    `Control enemy spawning per level - don't start until the change level notification is done
    if currentEnemies = 0 and levelChangeTimer(1, 1) = 0
@@ -768,7 +776,8 @@ SpawnEnemies:
    endif
 return
 
-`Makes the enemies walk towards the player
+`Makes the enemies walk towards the player, also makes them constantly stare at the player.
+`It constantly updates the boundary object as it changes (because of the animation being played).
 ControlEnemies:
    `Control enemy following player
    `Because "point object" was changing the x and z angles we rememeber them
